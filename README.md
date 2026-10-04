@@ -3,6 +3,7 @@
 This project exposes a small local proxy for Vavoo live streams through these endpoints:
 
 - `GET /channels.m3u8`
+- `GET /epg.xml`
 - `GET /countries`
 - `GET /stream/:id`
 
@@ -58,6 +59,23 @@ node index.js \
 ```
 
 ## Endpoints
+
+### `GET /epg.xml`
+
+Returns XMLTV now/next programme information from the existing Vavoo channel
+catalogue and five-minute channel cache. No separate guide database or additional
+upstream requests are used. Channels without upstream programme information have
+no programme entries.
+
+`GET /epg.xml?country=Germany` limits the guide to the same country as a filtered
+playlist. `/channels.m3u8` advertises the matching guide URL using `url-tvg` and
+`x-tvg-url`; its `tvg-id` values match the XMLTV channel IDs. Reload the playlist
+in your player after updating. Players that ignore the playlist guide attributes
+need the public `/epg.xml` URL entered manually.
+
+Behind an HTTPS reverse proxy, forward the public Host and set
+`X-Forwarded-Proto: https` so generated guide, stream, and HLS proxy URLs use HTTPS.
+The reverse proxy must overwrite this header with the actual public protocol.
 
 ### `GET /channels.m3u8`
 

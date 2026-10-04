@@ -59,6 +59,12 @@ function getLocalBaseUrl() {
     return `http://${httpHost}:${port}`;
 }
 
+function getRequestBaseUrl(req) {
+    const forwardedProtocol = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const protocol = ['http', 'https'].includes(forwardedProtocol) ? forwardedProtocol : req.protocol;
+    return `${protocol}://${req.headers.host}`;
+}
+
 function buildHomePage() {
     const baseUrl = getLocalBaseUrl();
     const allM3u = `${baseUrl}/channels.m3u8`;
@@ -202,7 +208,7 @@ function getStreamHeaders(req) {
  * Example: `https://host/live.m3u8` -> `/hls-proxy?url=...`.
  */
 function getProxiedUpstreamUrl(req, upstreamUrl) {
-    return `${req.protocol}://${req.headers.host}/hls-proxy?url=${encodeURIComponent(upstreamUrl)}`;
+    return `${getRequestBaseUrl(req)}/hls-proxy?url=${encodeURIComponent(upstreamUrl)}`;
 }
 
 /**
@@ -450,7 +456,8 @@ function mapCatalogItem(item) {
         name,
         logo: item.logo || '',
         group: item.group || '',
-        country
+        country,
+        epg: Array.isArray(item.epg) ? item.epg : []
     };
 }
 
@@ -691,17 +698,64 @@ app.get('/countries', async function (req, res) {
     }
 });
 
+function escapeXml(value) {
+    return String(value ?? '')
+        .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g, '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+function xmltvTime(seconds) {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value <= 0) return null;
+    const date = new Date(value * 1000);
+    if (!Number.isFinite(date.getTime())) return null;
+    return date.toISOString().slice(0, 19).replace(/[-:T]/g, '') + ' +0000';
+}
+
+function buildEpgXml(channels) {
+    const output = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="vavoo-iptv-stream-proxy">'];
+    for (const channel of channels) {
+        output.push(`<channel id="${escapeXml(channel.id)}"><display-name>${escapeXml(channel.name)}</display-name></channel>`);
+    }
+    for (const channel of channels) {
+        for (const programme of channel.epg || []) {
+            if (!programme) continue;
+            const start = xmltvTime(programme.start);
+            const stop = xmltvTime(programme.stop ?? programme.end);
+            if (!start || !stop || Number(programme.stop ?? programme.end) <= Number(programme.start)) continue;
+            output.push(`<programme start="${start}" stop="${stop}" channel="${escapeXml(channel.id)}"><title>${escapeXml(programme.name ?? programme.title)}</title></programme>`);
+        }
+    }
+    output.push('</tv>');
+    return output.join('\n');
+}
+
+app.get('/epg.xml', async function (req, res) {
+    try {
+        const country = req.query.country;
+        const channels = country ? await getChannelsByCountry(country) : await getChannels();
+        res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.send(buildEpgXml(channels));
+    } catch (error) {
+        console.log('[vavoo] epg.xml error', error.message);
+        res.status(500).send(error.message);
+    }
+});
+
 app.get('/channels.m3u8', async function (req, res) {
     try {
         const country = req.query.country;
         const channels = country ? await getChannelsByCountry(country) : await getChannels();
-        const output = ['#EXTM3U'];
+        const epgUrl = `${getRequestBaseUrl(req)}/epg.xml${country ? `?country=${encodeURIComponent(country)}` : ''}`;
+        const output = [`#EXTM3U url-tvg="${epgUrl}" x-tvg-url="${epgUrl}"`];
 
         for (const channel of channels) {
-            output.push(`#EXTINF:-1 tvg-name="${channel.name}" group-title="${channel.country}" tvg-logo="${channel.logo}" tvg-id="${channel.name}",${channel.name}`);
+            output.push(`#EXTINF:-1 tvg-name="${channel.name}" group-title="${channel.country}" tvg-logo="${channel.logo}" tvg-id="${channel.id}",${channel.name}`);
             output.push('#EXTVLCOPT:http-user-agent=VAVOO/2.6');
             output.push('#EXTVLCOPT:no-ssl-verify');
-            output.push(`${req.protocol}://${req.headers.host}/stream/${encodeURIComponent(channel.id)}`);
+            output.push(`${getRequestBaseUrl(req)}/stream/${encodeURIComponent(channel.id)}`);
         }
 
         setPlaylistHeaders(res);

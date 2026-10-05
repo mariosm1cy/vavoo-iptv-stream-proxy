@@ -446,6 +446,23 @@ async function getAddonSignature() {
     throw new Error('Unable to obtain addonSig');
 }
 
+function getChannelLogo(logo) {
+    if (!logo) return '';
+
+    try {
+        const url = new URL(logo);
+        const filename = url.searchParams.get('c');
+        if (url.hostname === 'logo.huhu.to' && url.pathname === '/logo'
+            && /^\d+\.png$/.test(filename || '')) {
+            return `https://vavoo.to/live2/logo/${filename}`;
+        }
+    } catch (error) {
+        // Preserve other logo values, including relative URLs.
+    }
+
+    return logo;
+}
+
 function mapCatalogItem(item) {
     const name = item.name || 'Unknown Channel';
     const country = extractCountry(item.group);
@@ -454,7 +471,7 @@ function mapCatalogItem(item) {
         id: getStableChannelId(name, country),
         url: item.url,
         name,
-        logo: item.logo || '',
+        logo: getChannelLogo(item.logo),
         group: item.group || '',
         country,
         epg: Array.isArray(item.epg) ? item.epg : []

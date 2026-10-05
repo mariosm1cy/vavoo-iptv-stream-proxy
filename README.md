@@ -44,10 +44,20 @@ All configuration is done through CLI parameters.
 - `--http-port`: local HTTP port for the proxy, default `8888`
 - `--vavoo-language`: language sent to the Vavoo APIs, default `de`, optional example: `en`
 - `--vavoo-region`: region sent to the Vavoo APIs, default `US` for a broad catalog, optional `DE` which tends to prefilter strongly toward Germany
-- `--vavoo-url-list`: built-in URL selection, one of `primary`, `fallback`, or `both`, default `both`
+- `--vavoo-url-list`: built-in URL selection, one of `primary`, `fallback`, or `both`, default `both`. `primary` uses Vavoo; `fallback` tries Oha then Huhu; `both` tries Vavoo, Oha, then Huhu.
 - `--redirect`: redirect VAVOO user agents directly to resolved upstream URLs instead of proxying them, default disabled
 
 ## Extended Example
+
+Catalog loading and stream URL resolution try each selected site in order when a
+request fails. Oha and Huhu use their newer public Live TV APIs without a Vavoo
+signature. Their channel names, country tags, logos and now/next timestamps are
+converted to the proxy's existing format and share the five-minute channel cache.
+The known `(1)` and `(7)` channel suffixes are converted to `.b` and `.s` to keep
+existing playlist and XMLTV IDs stable.
+
+These are site/API backups. They do not switch channel feeds when a resolved
+media stream fails. Healthy Vavoo requests do not contact the backup sites.
 
 ```bash
 node index.js \

@@ -29,10 +29,10 @@ function getBaseSites(selection) {
     }
 
     if (normalized === 'fallback') {
-        return ['https://kool.to'];
+        return ['https://oha.to', 'https://huhu.to'];
     }
 
-    return ['https://vavoo.to', 'https://kool.to'];
+    return ['https://vavoo.to', 'https://oha.to', 'https://huhu.to'];
 }
 
 const app = express();
@@ -478,7 +478,61 @@ function mapCatalogItem(item) {
     };
 }
 
+function isMirrorBase(baseUrl) {
+    return baseUrl === 'https://oha.to' || baseUrl === 'https://huhu.to';
+}
+
+function mapMirrorCatalogItem(item, baseUrl) {
+    const name = String(item.name || 'Unknown Channel').replace(/\s+\((1|7)\)$/, function (match, source) {
+        return source === '1' ? ' .b' : ' .s';
+    });
+    const logo = item.images?.logo || '';
+    return mapCatalogItem({
+        name,
+        url: new URL(item.url, baseUrl).toString(),
+        group: item.tags?.[0] || 'default',
+        logo: logo ? new URL(logo, /^\/live2\/logo\/\d+\.png$/.test(logo) ? 'https://vavoo.to' : baseUrl).toString() : '',
+        epg: (Array.isArray(item.epg) ? item.epg : []).filter(Boolean).map(function (programme) {
+            return {
+                name: programme.title ?? programme.name,
+                start: typeof programme.start === 'number' ? programme.start : Date.parse(programme.start) / 1000,
+                stop: typeof (programme.end ?? programme.stop) === 'number'
+                    ? (programme.end ?? programme.stop) : Date.parse(programme.end ?? programme.stop) / 1000
+            };
+        })
+    });
+}
+
+async function loadMirrorCatalog(baseUrl) {
+    const channels = [];
+    let cursor = null;
+    do {
+        const url = new URL('/live/catalog/live/channels.json', baseUrl);
+        url.searchParams.set('language', currentLanguage);
+        url.searchParams.set('region', currentRegion);
+        if (cursor !== null) url.searchParams.set('cursor', cursor);
+        const body = await requestJson({ url: url.toString() });
+        if (!Array.isArray(body?.items)) throw new Error('Invalid mirror catalog');
+        for (const item of body.items) {
+            if (item?.type === 'live' && item?.url) channels.push(mapMirrorCatalogItem(item, baseUrl));
+        }
+        cursor = body.nextCursor;
+    } while (cursor);
+    if (!channels.length) throw new Error('Empty mirror catalog');
+    return channels;
+}
+
+function getMirrorPlaybackUrl(baseUrl, channelUrl) {
+    const path = new URL(channelUrl).pathname;
+    const legacyId = path.match(/^\/vavoo-iptv\/play\/(\d+[a-f0-9]{12})$/i)?.[1];
+    const id = legacyId ? legacyId.slice(0, -12) : path.match(/^\/live\/play\/(\d+)$/)?.[1];
+    if (!id || !/^\d+$/.test(id)) throw new Error('Unsupported channel URL for mirror');
+    return `${baseUrl}/live/play/${id}`;
+}
+
 async function loadCatalogFromBase(baseUrl, signature) {
+    if (isMirrorBase(baseUrl)) return loadMirrorCatalog(baseUrl);
+
     const catalogUrl = `${baseUrl.replace(/\/$/, '')}/mediahubmx-catalog.json`;
     const headers = getCatalogHeaders(signature);
     const channels = [];
@@ -530,10 +584,9 @@ async function getChannels(forceRefresh = false) {
         return cached;
     }
 
-    const signature = await getAddonSignature();
-
     for (const baseUrl of baseSites) {
         try {
+            const signature = isMirrorBase(baseUrl) ? null : await getAddonSignature();
             const channels = await loadCatalogFromBase(baseUrl, signature);
             cache.set(CHANNELS_CACHE_KEY, channels, 300);
             console.log(`[vavoo] channels loaded from ${baseUrl}: ${channels.length}`);
@@ -574,12 +627,21 @@ function normalizeStreamId(id) {
 }
 
 async function resolveStreamUrl(channel) {
-    const signature = await getAddonSignature();
-
     for (const baseUrl of baseSites) {
         const resolveUrl = `${baseUrl.replace(/\/$/, '')}/mediahubmx-resolve.json`;
 
         try {
+            if (isMirrorBase(baseUrl)) {
+                const url = new URL('/live/resolve', baseUrl);
+                url.searchParams.set('language', currentLanguage);
+                url.searchParams.set('region', currentRegion);
+                url.searchParams.set('url', getMirrorPlaybackUrl(baseUrl, channel.url));
+                const body = await requestJson({ url: url.toString() });
+                if (body?.url) return body.url;
+                continue;
+            }
+
+            const signature = await getAddonSignature();
             const body = await requestJson({
                 method: 'POST',
                 url: resolveUrl,

@@ -224,30 +224,8 @@ function setPlaylistHeaders(res) {
  * Returns a stable local master playlist for an upstream media playlist.
  * Example body contains one `#EXT-X-STREAM-INF` entry pointing to `/hls-proxy`.
  */
-async function sendHlsMasterPlaylist(req, res, streamUrl) {
+function sendHlsMasterPlaylist(req, res, streamUrl) {
     setPlaylistHeaders(res);
-
-    try {
-        const upstream = await fetch(streamUrl, {
-            headers: getStreamHeaders(req),
-            signal: AbortSignal.timeout(15000)
-        });
-
-        if (!upstream.ok) {
-            throw new Error(`upstream returned HTTP ${upstream.status}`);
-        }
-
-        const playlist = await upstream.text();
-
-        if (/#EXT-X-STREAM-INF/i.test(playlist)) {
-            res.send(rewriteM3u8Playlist(req, streamUrl, playlist));
-            return;
-        }
-    } catch (error) {
-        console.log(`[vavoo] master playlist fallback: ${error.message}`);
-    }
-
-    // Preserve the existing single-variant fallback.
     res.send([
         '#EXTM3U',
         '#EXT-X-VERSION:3',
@@ -917,7 +895,7 @@ app.get('/stream/:id', async function (req, res) {
 
         if (isM3u8Url(streamUrl)) {
             console.log(`[${connId}] hls master playlist "${channel.name}"`);
-            await sendHlsMasterPlaylist(req, res, streamUrl);
+            sendHlsMasterPlaylist(req, res, streamUrl);
             return;
         }
 
